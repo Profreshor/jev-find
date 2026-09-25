@@ -1,0 +1,17 @@
+[package]
+name = "jev"
+version = "0.1.0"
+edition = "2024"
+description = "Semantic search over code, logs, and diffs for coding agents, powered by TypeSafe Jev"
+license = "MIT"
+repository = "https://github.com/Profreshor/jev-find"
+readme = "README.md"
+
+[dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
+dotenvy = "0.15.7"
+ignore = "0.4.33"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "http2"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "sync", "time"] }
