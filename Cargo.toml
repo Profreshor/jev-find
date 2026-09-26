@@ -1,6 +1,6 @@
 [package]
 name = "jev"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Semantic search over code, logs, and diffs for coding agents, powered by TypeSafe Jev"
 license = "MIT"

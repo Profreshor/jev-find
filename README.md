@@ -75,7 +75,7 @@ ln -s ../../.agents/skills/jev ~/.claude/skills/jev
 Skills are optional by design: the agent reads the description and decides whether to load it. For a stronger nudge, add a line to `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md`, which load in every session:
 
 ```markdown
-`jev find "<what the code/text does>" [paths]` searches by meaning in about a second (see the `jev` skill). In unfamiliar code, when you know the behavior but not the identifier names, run it before guessing grep patterns or spawning a search subagent. Before reporting a task done, run `git diff | jev find "a change unrelated to <task>"`.
+`jev find "<what the code/text does>" [paths]` searches by meaning in about a second (see the `jev` skill). In unfamiliar code, when you know the behavior but not the identifier names, run it before guessing grep patterns or spawning a search subagent. Before reporting a multi-file change done, run `git diff | jev find "a change unrelated to <task>"` on your own change (`git diff <base>` if already committed), and say in your report whether each flagged hunk was intended. Don't redirect its stderr: the summary line is the useful part.
 ```
 
 ## Usage
@@ -90,7 +90,7 @@ jev find <QUERY> [PATHS]...
   --json               machine-readable output
 ```
 
-With no paths it reads piped stdin, or searches the current directory if nothing is piped. It respects `.gitignore`. While walking directories it skips binary files and files over 1 MB, and says how many it skipped. A file you name directly is always searched.
+With no paths it reads piped stdin, or searches the current directory if nothing is piped. An empty pipe is an error (exit `2`), not a fallback to the current directory. See the changelog for why. It respects `.gitignore`. While walking directories it skips binary files and files over 1 MB, and says how many it skipped. A file you name directly is always searched.
 
 Exit codes work like grep: `0` matches found, `1` no matches, `2` error or nothing to search.
 
@@ -157,6 +157,12 @@ Jev charges $0.042 per million input tokens (output is free). TypeSafe says its 
 `research/jev-agent-pairing.md` is the research that led here: what TypeSafe documents, what other people had built (several `jgrep` clones and MCP servers appeared the week Jev launched), and which agent use cases have evidence behind them. The short version: an MCP tool needs the text passed as tool arguments, so the agent has to write it out first, which defeats the point. A CLI in a pipe keeps the bulk out of the agent's context entirely.
 
 Not affiliated with TypeSafe.
+
+## Changelog
+
+**0.1.1.** Empty piped input now exits `2` instead of falling back to searching the current directory. After an agent committed its work, the routine `git diff | jev find "a change unrelated to ..."` piped in nothing, and `jev` scanned the entire repo: about 17k chunks and 9M tokens per run, flagging most of the repo as "unrelated". On the first day of real use (Codex agents in a multi-agent setup, about 340 runs), this one fallback was roughly 90% of the tokens spent. `jev` now tells a real pipe (even an empty one) apart from an agent shell with `/dev/null` attached, and still searches the current directory in the second case.
+
+**0.1.0.** First release.
 
 ## License
 

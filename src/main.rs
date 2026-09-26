@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::{IsTerminal, Read};
+use std::os::unix::fs::FileTypeExt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -213,12 +214,20 @@ async fn main() {
         std::process::exit(2);
     };
 
-    // Piped input wins; an empty pipe (common when agents run commands) falls back to searching the cwd.
+    // A real pipe or redirected file is the input, even when empty: `git diff | jev find` with nothing
+    // uncommitted must not fall back to scanning the whole repo. Agent shells often attach /dev/null
+    // (not a pipe), so that case still searches the cwd.
+    let from_stdin = paths.is_empty()
+        && !std::io::stdin().is_terminal()
+        && std::fs::metadata("/dev/stdin").is_ok_and(|m| m.file_type().is_fifo() || m.is_file());
     let mut piped = String::new();
-    if paths.is_empty() && !std::io::stdin().is_terminal() {
+    if from_stdin {
         let _ = std::io::stdin().read_to_string(&mut piped);
+        if piped.trim().is_empty() {
+            eprintln!("jev: piped input is empty, nothing to search (an empty `git diff` means nothing is uncommitted; use `git diff <base>`)");
+            std::process::exit(2);
+        }
     }
-    let from_stdin = !piped.trim().is_empty();
     let paths = if paths.is_empty() { vec![".".to_string()] } else { paths };
     let (chunks, n_files, skipped) =
         if from_stdin { (chunk_text("stdin", &piped, chunk), 1, 0) } else { walk(&paths, chunk) };
