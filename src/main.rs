@@ -15,6 +15,10 @@ const WINDOW_CHUNKS: usize = 64;
 const CHUNK_CHARS: usize = 6_000;
 const MAX_FILE_BYTES: u64 = 1_000_000;
 const PARALLEL: usize = 16;
+// Refuse to run past these without an explicit flag or env var. Agents ignore cost advice in prompts,
+// so the binary enforces it. The ledger is shared by every agent on the machine.
+const DEFAULT_MAX_TOKENS: u64 = 1_000_000;
+const DEFAULT_DAILY_TOKENS: u64 = 100_000_000;
 
 #[derive(Parser)]
 #[command(about = "Semantic search powered by TypeSafe Jev")]
@@ -45,6 +49,9 @@ enum Cmd {
         files: bool,
         #[arg(long)]
         json: bool,
+        /// Refuse if the estimated cost of this search is over N input tokens
+        #[arg(long, default_value_t = DEFAULT_MAX_TOKENS)]
+        max_tokens: u64,
     },
 }
 
@@ -127,6 +134,38 @@ fn walk(paths: &[String], max: usize) -> (Vec<Chunk>, usize, usize) {
     (chunks, files, skipped)
 }
 
+/// Rough input-token estimate, calibrated against the `usage` the API reports.
+fn estimate_tokens(chunks: &[Chunk], query: &str) -> u64 {
+    chunks.iter().map(|c| ((c.text.len() + c.src.len() + query.len()) / 3 + 80) as u64).sum()
+}
+
+/// Today's (UTC) usage ledger: one "<day> <tokens>" line per search.
+fn ledger() -> Option<(std::path::PathBuf, u64)> {
+    let dir = std::path::PathBuf::from(std::env::var("HOME").ok()?).join(".config/jev");
+    let day = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() / 86_400;
+    Some((dir.join("usage.log"), day))
+}
+
+fn used_today() -> u64 {
+    let Some((path, day)) = ledger() else { return 0 };
+    let text = std::fs::read_to_string(path).unwrap_or_default();
+    text.lines()
+        .filter_map(|l| l.split_once(' '))
+        .filter(|(d, _)| d.parse() == Ok(day))
+        .filter_map(|(_, t)| t.trim().parse::<u64>().ok())
+        .sum()
+}
+
+fn record(tokens: u64) {
+    use std::io::Write;
+    let Some((path, day)) = ledger() else { return };
+    let _ = std::fs::create_dir_all(path.parent().unwrap());
+    // One short O_APPEND write per line, so concurrent agents don't interleave.
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = f.write_all(format!("{day} {tokens}\n").as_bytes());
+    }
+}
+
 /// POST with retry on 429/529/5xx and network errors.
 async fn post(client: &reqwest::Client, key: &str, body: &Value) -> Result<Value, String> {
     let mut delay = Duration::from_millis(500);
@@ -205,10 +244,17 @@ async fn score(chunks: &[Chunk], query: &str, key: String) -> Result<(Vec<f64>, 
 
 #[tokio::main]
 async fn main() {
-    let Cmd::Find { query, paths, chunk, threshold, top, files, json } = Cli::parse().cmd;
+    let Cmd::Find { query, paths, chunk, threshold, top, files, json, max_tokens } = Cli::parse().cmd;
     // Env var, then ./.env, then ~/.config/jev/.env (agents don't all load shell profiles).
     let _ = dotenvy::dotenv();
     let _ = std::env::var("HOME").map(|h| dotenvy::from_path(format!("{h}/.config/jev/.env")));
+    // Orchestrators that run agents unattended mark their shells (no-mistakes sets NM_HOME).
+    // JEV_BLOCK_ENV=NM_HOME,OTHER turns jev off for them without touching interactive sessions.
+    let block = std::env::var("JEV_BLOCK_ENV").unwrap_or_default();
+    if let Some(v) = block.split(',').map(str::trim).find(|v| !v.is_empty() && std::env::var_os(v).is_some()) {
+        eprintln!("jev: disabled for this agent ({v} is set and listed in JEV_BLOCK_ENV). Use grep or read the code instead.");
+        std::process::exit(2);
+    }
     let Ok(key) = std::env::var("TYPESAFE_API_KEY") else {
         eprintln!("jev: TYPESAFE_API_KEY is not set (env, ./.env, or ~/.config/jev/.env)");
         std::process::exit(2);
@@ -237,6 +283,27 @@ async fn main() {
         std::process::exit(2);
     }
 
+    let estimate = estimate_tokens(&chunks, &query);
+    if estimate > max_tokens {
+        eprintln!(
+            "jev: refusing: {} chunks from {n_files} files is ~{:.1}M tokens, over the {:.1}M per-search limit. \
+             Search the one or two directories where this behavior should live, or grep if you know a name. \
+             --max-tokens N raises the limit.",
+            chunks.len(), estimate as f64 / 1e6, max_tokens as f64 / 1e6,
+        );
+        std::process::exit(2);
+    }
+    let daily = std::env::var("JEV_DAILY_TOKENS").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_DAILY_TOKENS);
+    let used = used_today();
+    if used + estimate > daily {
+        eprintln!(
+            "jev: refusing: this search (~{:.1}M tokens) would pass today's budget ({:.1}M of {:.1}M used, resets 00:00 UTC). \
+             Use grep or read the code instead. JEV_DAILY_TOKENS in ~/.config/jev/.env sets the budget.",
+            estimate as f64 / 1e6, used as f64 / 1e6, daily as f64 / 1e6,
+        );
+        std::process::exit(2);
+    }
+
     let t = Instant::now();
     let (scores, tokens) = match score(&chunks, &query, key).await {
         Ok(v) => v,
@@ -245,6 +312,7 @@ async fn main() {
             std::process::exit(2);
         }
     };
+    record(tokens);
     let secs = t.elapsed().as_secs_f64();
 
     // Rows: (score, src, start, end, chunk index). In --files mode keep each file's best chunk.

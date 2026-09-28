@@ -44,8 +44,9 @@ jq -r '.components.schemas|to_entries[]|"\(.key): \((.value.properties//{})|keys
 - **It doesn't explain anything.** Jev returns probabilities, not prose. You get locations and scores, then you (or your agent) read the code.
 - **It doesn't count or do arithmetic.** "How many handlers touch the DB" is not a question it can answer.
 - **It isn't deterministic.** A vague query matched 76, 82 and 81 chunks on three identical runs. The top results stay stable. Chunks near the threshold can flip.
-- **It reads your description literally.** "Database table for leasing" skipped every `...Request` object, because those aren't tables. Reword and rerun. A run costs about a cent.
+- **It reads your description literally.** "Database table for leasing" skipped every `...Request` object, because those aren't tables. Reword and rerun. A search over one or two directories costs about a cent.
 - **It doesn't treat file contents as hostile.** Text in the searched files could in principle steer the scores. The worst case for a search tool is hiding or surfacing a chunk, but don't build a security gate on it.
+- **It won't run up a bill.** jev estimates each search before calling the API and refuses anything over 1M input tokens (`--max-tokens` to change). It also keeps a per-machine daily ledger in `~/.config/jev/usage.log` and refuses once today's total would pass `JEV_DAILY_TOKENS` (default 100M, resets 00:00 UTC). `JEV_BLOCK_ENV=NM_HOME` in `~/.config/jev/.env` turns jev off for agents whose environment has that variable, such as the ones [no-mistakes](https://github.com/kunchenguid/no-mistakes) runs unattended (comma-separate several names). Agents repeating whole-repo searches spent ~600M tokens a day before these limits existed.
 - **It sends your code to TypeSafe's API.** Read their [data policy](https://docs.typesafe.ai/legal) before pointing it at anything you can't share.
 
 ## Install

@@ -5,7 +5,7 @@ description: 'Find code, log lines, diff hunks, or records by what they do, in a
 
 # jev find
 
-`jev find "<description>" [paths]` scores every chunk of text (~40 lines) for whether it matches a plain-English description and prints the matches, best first. A mid-size repo (~150 files) takes about a second and costs about a cent. A large one (~4,000 files) costs about 40 cents per search, so point it at the relevant subdirectory when you can. Piped stdin is searched instead of files.
+`jev find "<description>" [paths]` scores every chunk of text (~40 lines) for whether it matches a plain-English description and prints the matches, best first. Cost scales with how much text you search: ~150 files is about a cent, ~4,000 files is about 40 cents. Always pass the one or two directories where the behavior should live, never `.` in a large repo. Searches over ~1M tokens (roughly 2,000 chunks) are refused, and there is a daily budget shared by every agent on the machine. Piped stdin is searched instead of files.
 
 ## When to reach for it
 
@@ -27,7 +27,7 @@ Jev reads the description literally. Describe the content you want to see, not t
 
 For negatives, state the thing to find: `"a change that does not relate to <task>"`.
 
-**Refine and rerun.** A query takes under a second and costs about a cent, so reword and run it again rather than settling for a weak result. If tests or docs outrank the implementation, add the exclusion to the description: `"implementation code, not tests, that <behavior>"`. On casey/just that moved the real code from #3 to #1 on both queries where tests had been winning.
+**Refine and rerun on narrow paths.** Rewording and rerunning is fine when the paths are small. If a search was broad, narrow the paths before rerunning, or switch to grep once a result gives you an identifier. If tests or docs outrank the implementation, add the exclusion to the description: `"implementation code, not tests, that <behavior>"`. On casey/just that moved the real code from #3 to #1 on both queries where tests had been winning.
 
 ## Reading the output
 
@@ -41,6 +41,8 @@ jev: 3 of 412 chunks >= 0.5; next best 0.31 at src/x.rs:1-40 | ...   (stderr)
 - Test code and docs that describe the behavior also score high. Say "not tests" in the description (see above), or narrow the paths when tests live in a separate directory.
 - Exit code: 0 found matches, 1 found none, 2 error.
 
-Flags: `--top N` (default 20), `--threshold P` (default 0.5), `--chunk LINES` (default 40), `--files` (one line per file, which ranks files by relevance), `--json`.
+Flags: `--top N` (default 20), `--threshold P` (default 0.5), `--chunk LINES` (default 40), `--files` (one line per file, which ranks files by relevance), `--json`, `--max-tokens N` (default 1,000,000).
+
+**If it refuses** (exit 2, "refusing: ..."), don't raise `--max-tokens` to get past it. Narrow the paths, or use grep. When the daily budget is spent, or jev says it is disabled for this agent, stop using jev for the session.
 
 Respects `.gitignore`. When walking directories it skips binary files and files over 1 MB, and reports the skip count in the summary. A file you name directly is always searched. Needs `TYPESAFE_API_KEY` in the environment, `./.env`, or `~/.config/jev/.env`.
